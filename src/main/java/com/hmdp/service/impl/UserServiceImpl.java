@@ -28,8 +28,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.LOGIN_USER_KEY;
-import static com.hmdp.utils.RedisConstants.LOGIN_USER_TTL;
+import static com.hmdp.utils.RedisConstants.*;
 import static com.hmdp.utils.SystemConstants.USER_NICK_NAME_PREFIX;
 
 /**
@@ -63,7 +62,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String code = RandomUtil.randomNumbers(6);
 
         //3.将验证码存储到redis
-        redisTemplate.opsForValue().set("code",code);
+        redisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone,code);
         //4.模拟发送验证码
         log.info("验证码：{}",code);
 
@@ -79,47 +78,45 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
      */
     @Override
     public Result login(LoginFormDTO loginForm, HttpSession session) {
-        //1.校验手机号码
+        // 1.校验手机号
         String phone = loginForm.getPhone();
-        if(RegexUtils.isPhoneInvalid(phone))
-            //手机号码不合法
-            return Result.fail("手机号码格式不正确");
-        //2.校验验证码
-
-        //从redis获取验证码
-        String code = redisTemplate.opsForValue().get("code");
-
-        if(code == null || !loginForm.getCode().equals(code))
-            return Result.fail("验证码不正确");
-
-        //2.根据手机号判断是否存在用户
-        User user = query().eq("phone", phone).one();
-        if(user == null){
-            //不存在用户
-            user = createWithPhone(phone);
+        if (RegexUtils.isPhoneInvalid(phone)) {
+            // 2.如果不符合，返回错误信息
+            return Result.fail("手机号格式错误！");
+        }
+        // 3.从redis获取验证码并校验
+        String cacheCode = redisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
+        String code = loginForm.getCode();
+        if (cacheCode == null || !cacheCode.equals(code)) {
+            // 不一致，报错
+            return Result.fail("验证码错误");
         }
 
-        UserDTO userDTO = new UserDTO();
-        BeanUtil.copyProperties(user,userDTO);
+        // 4.一致，根据手机号查询用户 select * from tb_user where phone = ?
+        User user = query().eq("phone", phone).one();
 
-        //3.将用户保存到redis
+        // 5.判断用户是否存在
+        if (user == null) {
+            // 6.不存在，创建新用户并保存
+            user = createUserWithPhone(phone);
+        }
 
-        //3.1 设置token的key
+        // 7.保存用户信息到 redis中
+        // 7.1.随机生成token，作为登录令牌
         String token = UUID.randomUUID().toString(true);
-        String tokenKey = LOGIN_USER_KEY + token;
-
-        //3.2 将用户信息转成map
-        Map<String, Object> map = BeanUtil.beanToMap(userDTO,new HashMap<>(),
+        // 7.2.将User对象转为HashMap存储
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        Map<String, Object> userMap = BeanUtil.beanToMap(userDTO, new HashMap<>(),
                 CopyOptions.create()
                         .setIgnoreNullValue(true)
-                        .setFieldValueEditor((fieldName,filedValue) -> filedValue.toString()));
-
-        //3.3 存入信息
-        redisTemplate.opsForHash().putAll(tokenKey,map);
-
-        //4.设置key有效期
+                        .setFieldValueEditor((fieldName, fieldValue) -> fieldValue.toString()));
+        // 7.3.存储
+        String tokenKey = LOGIN_USER_KEY + token;
+        redisTemplate.opsForHash().putAll(tokenKey, userMap);
+        // 7.4.设置token有效期
         redisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.MINUTES);
-        //返回token
+
+        // 8.返回token
         return Result.ok(token);
     }
 
@@ -128,7 +125,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
      * @param phone
      * @return
      */
-    private User createWithPhone(String phone) {
+    private User createUserWithPhone(String phone) {
         User user = new User().setPhone(phone).setNickName(USER_NICK_NAME_PREFIX + RandomUtil.randomNumbers(8));
         save(user);
         return user;

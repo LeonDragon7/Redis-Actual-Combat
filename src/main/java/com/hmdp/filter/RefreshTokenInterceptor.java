@@ -1,6 +1,7 @@
 package com.hmdp.filter;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.StrUtil;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.utils.UserHolder;
 import org.apache.commons.lang3.StringUtils;
@@ -15,37 +16,41 @@ import java.util.concurrent.TimeUnit;
 import static com.hmdp.utils.RedisConstants.*;
 
 public class RefreshTokenInterceptor implements HandlerInterceptor {
-    private StringRedisTemplate redisTemplate;
-    public RefreshTokenInterceptor(StringRedisTemplate redisTemplate) {
-        this.redisTemplate = redisTemplate;
+
+    private StringRedisTemplate stringRedisTemplate;
+
+    public RefreshTokenInterceptor(StringRedisTemplate stringRedisTemplate) {
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        //1.从请求头获取token - key
-        String token = request.getHeader("authenticate");
-        String tokenKey = LOGIN_USER_KEY + token;
-        if(StringUtils.isBlank(tokenKey)) return true;
-        //2.从redis获取用户信息
-        Map<Object, Object> map = redisTemplate.opsForHash().entries(tokenKey);
-        if(map.isEmpty())
+        // 1.获取请求头中的token
+        String token = request.getHeader("authorization");
+        if (StrUtil.isBlank(token)) {
             return true;
-
-        //3.将map转换成用户对象
-        UserDTO userDTO = BeanUtil.fillBeanWithMap(map, new UserDTO(), false);
-
-
-        //4.将用户信息保存到ThreadLocal
+        }
+        // 2.基于TOKEN获取redis中的用户
+        String key  = LOGIN_USER_KEY + token;
+        Map<Object, Object> userMap = stringRedisTemplate.opsForHash().entries(key);
+        // 3.判断用户是否存在
+        if (userMap.isEmpty()) {
+            return true;
+        }
+        // 5.将查询到的hash数据转为UserDTO
+        UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
+        // 6.存在，保存用户信息到 ThreadLocal
         UserHolder.saveUser(userDTO);
-
-        //5.刷新redis的key时间
-        redisTemplate.expire(tokenKey,LOGIN_USER_TTL, TimeUnit.MINUTES);
-        //放行
+        // 7.刷新token有效期
+        stringRedisTemplate.expire(key, LOGIN_USER_TTL, TimeUnit.MINUTES);
+        // 8.放行
         return true;
     }
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
+        // 移除用户
         UserHolder.removeUser();
     }
 }
+
