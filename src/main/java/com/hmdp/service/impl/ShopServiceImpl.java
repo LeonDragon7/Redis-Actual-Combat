@@ -16,8 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_TTL;
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -40,22 +39,30 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      */
     @Override
     public Result queryShopById(Long id) {
-        //1.查询redis是否存在商品详情数据
+        //1.查询redis是否存在商品详情数据 - 是否命中
         String key = CACHE_SHOP_KEY + id;
         String value = redisTemplate.opsForValue().get(key);
 
-        //2.判断redis缓存是否命中
+        //2.判断redis缓存是否存在
         if(StringUtils.isNotBlank(value)){
             //存在，将数据返回
             Shop shop = JSONUtil.toBean(value, Shop.class);
             return Result.ok(shop);
         }
 
-        //3.不存在，查询数据库
+        //(2).判断是否为空值(空字符串)
+        if(value != null) return Result.fail("商铺信息不存在");
+
+        //3.如果为null，查询数据库
         Shop shop = getById(id);
 
         //4.如果数据不存在，返回提示
-        if(shop == null) return Result.fail("商铺不存在");
+        if(shop == null) {
+            //解决缓存穿透
+            //(1).将空值(空字符串)写入redis
+            redisTemplate.opsForValue().set(key,"",CACHE_NULL_TTL,TimeUnit.MINUTES);
+            return Result.fail("商铺不存在");
+        }
 
         //5.将数据保存到redis
         String shopValue = JSONUtil.toJsonStr(shop);
