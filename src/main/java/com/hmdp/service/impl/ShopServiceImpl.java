@@ -64,4 +64,22 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //6.返回商铺信息
         return Result.ok(shop);
     }
+
+    /**
+     * 更新商铺信息
+     * @param shop 商铺数据
+     * @return 无
+     */
+    @Transactional
+    @Override
+    public Result update(Shop shop) {
+        //判断更新的商铺信息id是否为空
+        if(shop.getId() == null) return Result.fail("商铺不存在");
+        //更新数据库
+        updateById(shop);
+
+        //删除redis的商铺信息的缓存数据
+        redisTemplate.delete(CACHE_SHOP_KEY + shop.getId());
+        return Result.ok();
+    }
 }
