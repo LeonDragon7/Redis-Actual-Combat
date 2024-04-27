@@ -59,6 +59,7 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
         seckillVoucherService.save(seckillVoucher);
     }
 
+    @Transactional
     @Override
     public Result seckillVouche(Long voucherId) {
         //1.查询优惠卷信息
