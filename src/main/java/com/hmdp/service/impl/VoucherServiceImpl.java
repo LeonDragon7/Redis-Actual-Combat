@@ -77,7 +77,12 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
         if(voucher.getStock() < 1) return Result.fail("库存不足");
 
         //4.扣减库存
-        boolean isUpdate = seckillVoucherService.update().setSql("stock = stock - 1").eq("voucher_id",voucherId).update();
+        boolean isUpdate = seckillVoucherService
+                .update()
+                .setSql("stock = stock - 1")
+                .eq("voucher_id",voucherId)
+                .gt("stock",0)
+                .update();
 
         if(!isUpdate) return Result.fail("库存不足");
 
