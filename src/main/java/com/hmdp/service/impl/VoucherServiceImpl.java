@@ -64,34 +64,68 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
 
     @Override
     public Result seckillVouche(Long voucherId) {
-        //1.查询优惠卷信息
+        // 1.查询优惠券
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
-
-        //2.判断秒杀是否开始和结束
-        if(voucher.getBeginTime().isAfter(LocalDateTime.now())){
-            return Result.fail("秒杀未开始");
+        // 2.判断秒杀是否开始
+        if (voucher.getBeginTime().isAfter(LocalDateTime.now())) {
+            // 尚未开始
+            return Result.fail("秒杀尚未开始！");
         }
-        if(voucher.getEndTime().isBefore(LocalDateTime.now())){
-            return Result.fail("秒杀已结束");
+        // 3.判断秒杀是否已经结束
+        if (voucher.getEndTime().isBefore(LocalDateTime.now())) {
+            // 尚未开始
+            return Result.fail("秒杀已经结束！");
+        }
+        // 4.判断库存是否充足
+        if (voucher.getStock() < 1) {
+            // 库存不足
+            return Result.fail("库存不足！");
         }
 
-        //3.判断库存是否充足
-        if(voucher.getStock() < 1) return Result.fail("库存不足");
+        Long userId = UserHolder.getUser().getId();
+        //为什么锁要放在外面？
+        //因为如果放在里面，锁先执行完，事务是交给spring容器管理的，后执行，那么会造成线程安全问题
+        //intern():toString底层是new String创建不同对象，intern取出String里面相同的内容
+        synchronized (userId.toString().intern()){
+            //获取代理对象
+            IVoucherService proxy = (IVoucherService) AopContext.currentProxy();
+            return proxy.createVoucherOrder(voucherId,userId);
+        }
+    }
+    @Transactional
+    public Result createVoucherOrder(Long voucherId,Long userId) {
+        synchronized (userId.toString().intern()) {
+            // 5.1.查询订单
+            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+            // 5.2.判断是否存在
+            if (count > 0) {
+                // 用户已经购买过了
+                return Result.fail("用户已经购买过一次！");
+            }
 
-        //4.扣减库存
-        boolean isUpdate = seckillVoucherService.update().setSql("stock = stock - 1").eq("voucher_id",voucherId).update();
+            // 6.扣减库存
+            boolean success = seckillVoucherService.update()
+                    .setSql("stock = stock - 1") // set stock = stock - 1
+                    .eq("voucher_id", voucherId).gt("stock", 0) // where id = ? and stock > 0
+                    .update();
+            if (!success) {
+                // 扣减失败
+                return Result.fail("库存不足！");
+            }
 
-        if (!isUpdate) return Result.fail("库存不足");
+            // 7.创建订单
+            VoucherOrder voucherOrder = new VoucherOrder();
+            // 7.1.订单id
+            long orderId = redisIdWorker.nextId("order");
+            voucherOrder.setId(orderId);
+            // 7.2.用户id
+            voucherOrder.setUserId(userId);
+            // 7.3.代金券id
+            voucherOrder.setVoucherId(voucherId);
+            orderService.save(voucherOrder);
 
-        //6.创建订单
-        VoucherOrder order = new VoucherOrder();
-        order.setVoucherId(voucherId);
-        long orderId = redisIdWorker.nextId("order");
-        order.setId(orderId);
-        order.setUserId(userId);
-        orderService.save(order);
-
-        return Result.ok(orderId );
-
+            // 7.返回订单id
+            return Result.ok(orderId);
+        }
     }
 }
