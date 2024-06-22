@@ -8,8 +8,10 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +34,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private ISeckillVoucherService seckillVoucherService;
     @Resource
     private RedisIdWorker redisIdWorker;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
     @Override
     public Result seckillVoucher(Long voucherId) {
         //1.查询优惠卷信息
@@ -50,12 +54,30 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
 
         Long userId = UserHolder.getUser().getId();
+        //方法一：
         //为什么锁要放在外面？
         //因为锁如果在里面，等锁结束后，事务是交给spring管理的后执行，在这期间会造成线程安全问题
         //intern():toString底层会new String()创建不同对象，造成同一个用户会产生不同的锁，intern会取出对象相等的值来解决
-        synchronized (userId.toString().intern()){ //悲观锁 解决一人一单问题
+//        synchronized (userId.toString().intern()){ //悲观锁 解决一人一单问题
+        //获取代理对象(事务)
+//            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+//            return proxy.createVoucherOrder(voucherId,userId);
+//        }
+
+        //方法二：（分布式锁）
+        //1. 创建锁对象
+        SimpleRedisLock redisLock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+        //2. 获取锁
+        boolean tryLock = redisLock.tryLock(500);
+        //3. 判断是否获取锁
+        if(!tryLock) return Result.fail("不允许重复下单");
+        //4.创建订单
+        try {
+            //获取代理对象(事务)
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId,userId);
+        } finally {
+            redisLock.unLock();
         }
     }
     @Transactional
